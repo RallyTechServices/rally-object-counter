@@ -12,29 +12,15 @@ Ext.define("TSApp", {
         name : "TSApp"
     },
                         
-//    launch: function() {
-//        var me = this;
-//        this.setLoading("Loading stuff...");
-//
-//        this.down('#message_box').update(this.getContext().getUser());
-//        
-//        var model_name = 'Defect',
-//            field_names = ['Name','State'];
-//        
-//        this._loadAStoreWithAPromise(model_name, field_names).then({
-//            scope: this,
-//            success: function(store) {
-//                this._displayGrid(store,field_names);
-//            },
-//            failure: function(error_message){
-//                alert(error_message);
-//            }
-//        }).always(function() {
-//            me.setLoading(false);
-//        });
-//    },
     launch: function() {
         var me = this;
+
+        // for object types that may require a special "filter".
+        var queries = {
+            'ProjectPermission':'(Workspace = ' + this.getContext().getWorkspace()._ref + ')'
+        };
+
+        // object types to report on.
         var types = { 
             'Attachment':'--',
             'BuildDefinition':'--',
@@ -70,23 +56,28 @@ Ext.define("TSApp", {
         }); 
     
         Ext.Object.each(types, function(type_name){
-            me._getCount(type_name,types,display_container);
+            me._getCount(type_name,types,display_container,queries[type_name]);
         }); 
     },  
 
     _getTemplate:function(types){
         console.log('template for types:',types);
-        var template_array = ['<p><b>Workspace</b>:' + this.getContext().getWorkspace().Name + '</p>'];
+        var template_array = ['<b>Workspace</b>:' + this.getContext().getWorkspace().Name + '</br>'];
         Ext.Object.each( types, function(type_name) {
-            template_array.push('<p><b>' + type_name + 's</b>: {' + type_name + '}</p>');
+            template_array.push('&nbsp;&nbsp;&nbsp;&nbsp;<b>' + type_name + 's</b>: {' + type_name + '}</br>');
         }); 
         console.log(template_array);
         return new Ext.XTemplate(template_array);
     },  
-    _getCount:function(type_name,types,display_container){
+    _getCount:function(type_name,types,display_container,query){
         types[type_name] = '--';
         display_container.update(types);
-        Ext.create('Rally.data.WsapiDataStore',{
+        var special_filter=[];
+        if (query) {
+          special_filter=Rally.data.wsapi.Filter.fromQueryString(query);
+        }
+        Ext.create('Rally.data.wsapi.Store',{
+            filters: special_filter,
             model: type_name,
             limit: 1,
             pageSize: 1,
@@ -94,7 +85,7 @@ Ext.define("TSApp", {
             context: { project: null },
             listeners: {
                 load: function(store,records){
-                    console.log(records.length);
+                    //console.log(records);
                     types[type_name] = store.getTotalCount();
                     display_container.update(types);
                 }   
