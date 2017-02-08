@@ -15,3 +15,8 @@
     margin-right: 5px;
     cursor: pointer;
 }
+table, th, td {
+    border: 1px solid black;
+    border-spacing: 0px;
+    padding: 1px;
+}
