@@ -54,10 +54,10 @@ Ext.define("TSRallyObjectCounter", {
         this.setLoading(msg);
     },
 
-// removed Attachment because it kept timing out
+// removed user and attachment because they kept timing out
     _getRecordTypesToCount: function() {
         return ['UserStory','Defect','Task','TestCase',
-            'TestSet', 'PortfolioItem','User'];
+            'TestSet', 'PortfolioItem'];
     },
 
     _countItemsInWorkspace: function(workspace) {
