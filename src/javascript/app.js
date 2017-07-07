@@ -1,113 +1,148 @@
-Ext.define("TSApp", {
+Ext.define("TSRallyObjectCounter", {
     extend: 'Rally.app.App',
     componentCls: 'app',
     logger: new Rally.technicalservices.Logger(),
     defaults: { margin: 10 },
     items: [
-        {xtype:'container',itemId:'message_box',tpl:'Hello, <tpl>{_refObjectName}</tpl>'},
-        {xtype:'container',itemId:'display_box'}
+        {xtype:'container',itemId:'selector_box', layout: 'hbox'},
+        {xtype:'container',itemId: 'message_box'},
+        {xtype:'container',itemId:'display_box',layout:'fit'}
     ],
 
     integrationHeaders : {
-        name : "TSApp"
+        name : "TSRallyObjectCounter"
+    },
+
+    config: {
+        defaultSettings: {
+            countAllWorkspaces: true
+        }
     },
 
     launch: function() {
         var me = this;
+        this._setLoading('Loading...');
+        this._getWorkspaces().then({
+            success: function(workspaces) {
+                var promises = Ext.Array.map(workspaces, function(workspace){
+                    return function() { return me._countItemsInWorkspace(workspace); }
+                });
 
-        // for object types that may require a special "filter".
-        var queries = {
-            // queries on PP with OID > 0 return all PP for sub... we want only this workspace PP
-            'ProjectPermission':'(Workspace = ' + this.getContext().getWorkspace()._ref + ')'
-        };
-
-        // object types to report on.
-        var types = { 
-            'Attachment':'',
-            'BuildDefinition':'',
-            'Changeset':'',
-            'ConversationPost':'',
-            'Defect':'',
-            'DefectSuite':'',
-            'UserStory':'',
-            'Iteration':'',
-            'Milestone':'',
-            'PortfolioItem':'',
-            'PreliminaryEstimate':'',
-            'Project':'',
-            'ProjectPermission':'',
-            'Release':'',
-            'State':'',
-            'Tag':'',
-            'Task':'',
-            'TestCase':'',
-            'TestCaseResult':'',
-            'TestCaseStep':'',
-            'TestFolder':'',
-            'TestSet':'',
-            'User':''
-        };  
-
-        remaining_objects = _.size(types);
-        tot_count = 0;
-        console.log('objects: ',remaining_objects);
-    
-        var tpl = me._getTemplate(types);
-    
-        var display_container = this.add({
-            xtype:'container',
-            tpl: tpl,
-            margin: 10
-        }); 
-    
-        Ext.Object.each(types, function(type_name){
-            me._getCount(type_name,types,display_container,queries[type_name]);
-        }); 
-    },  
-
-    _getTemplate: function(types){
-        console.log('template for types:',types);
-        //var template_array = ['<table><tr align="left"><th><b>Workspace:</b></th><th><b>' + this.getContext().getWorkspace().Name + '</b></th></tr>'];
-        var template_array = ['<table><tr><th>&nbsp;</th><th><b>Workspace:</b></th><th><b>' + this.getContext().getWorkspace().Name + '</b></th></tr>'];
-        var count = 0;
-        Ext.Object.each( types, function(type_name) {
-            //template_array.push('<tr><td>' + type_name + 's</td><td>{' + type_name + '}</td></tr>');
-            template_array.push('<tr><td>' + (++count) + '</td><td>' + type_name + 's</td><td>{' + type_name + '}</td></tr>');
-        }); 
-        template_array.push('</table>');
-        console.log('template_array: ' + template_array);
-        return new Ext.XTemplate(template_array);
+                Deft.Chain.sequence(promises,this).then({
+                    success: this._makeGrid,
+                    failure: function(msg) {
+                        Ext.Msg.alert("Problem Finding Counts", msg);
+                    },
+                    scope: this
+                });
+            },
+            failure: function(msg) {
+                Ext.Msg.alert("Problem Finding Workspaces", msg);
+            },
+            scope: this
+        });
     },
-    
-    _getCount: function(type_name,types,display_container,query){
-        types[type_name] = '...(still loading, please wait)...';
-        display_container.update(types);
-        var special_filter=[];
-        if (query) {
-          special_filter=Rally.data.wsapi.Filter.fromQueryString(query);
+
+    _setLoading: function(msg) {
+        this.logger.log('Loading:', msg);
+        this.down('#message_box').removeAll();
+        if ( msg === false ) {
+            this.setLoading(false);
+            return;
         }
+        this.down('#message_box').add({xtype:'container',html:msg});
+        this.setLoading(msg);
+    },
+
+// removed user and attachment because they kept timing out
+    _getRecordTypesToCount: function() {
+        return ['UserStory','Defect','Task','TestCase',
+            'TestSet', 'PortfolioItem'];
+    },
+
+    _countItemsInWorkspace: function(workspace) {
+        var deferred = Ext.create('Deft.Deferred');
+        var me = this;
+        var types = this._getRecordTypesToCount();
+        var status = 'Counting items in workspace ' + workspace.get('_refObjectName');
+
+        this._setLoading(status);
+
+        var promises = Ext.Array.map(types, function(type){
+            return function() { return me._countItems(type,workspace); }
+        });
+
+        Deft.Chain.parallel(promises,this).then({
+            success: function(results){
+                var counts = {
+                    Name: workspace.get('_refObjectName')
+                };
+                Ext.Array.each(results, function(result){
+                    Ext.Object.each(result, function(key,value){
+                        counts[key] = value;
+                    });
+                });
+                deferred.resolve(counts);
+            },
+            failure: function(msg) {
+                deferred.reject(msg);
+            },
+            scope: this
+        });
+        return deferred.promise;
+    },
+
+    _countItems: function(type,workspace){
+        var deferred = Ext.create('Deft.Deferred');
+        var counts = {};
+        var message = "Counting:" + type + " in " + workspace.get('_refObjectName');
+        this._setLoading(message);
+
         Ext.create('Rally.data.wsapi.Store',{
-            filters: special_filter,
-            model: type_name,
+            model: type,
+            fetch: ['ObjectID'],
             limit: 1,
             pageSize: 1,
             autoLoad: true,
-            context: { project: null },
+            context: {
+                workspace: workspace.get('_ref'),
+                project: null
+            },
             listeners: {
                 load: function(store,records){
-                    types[type_name] = store.getTotalCount();
-                    display_container.update(types);
-                    remaining_objects--;
-                    tot_count = tot_count + store.getTotalCount();
-                    console.log('done: remaining_objects=' + remaining_objects + '; tot_count=' + tot_count);
-                    // ---------------------
-                    if (remaining_objects == 0) {
-                      console.log('xxxxxxxxxxxxxxxxxxxx');
+                    counts[type] = store.getTotalCount();
+                    deferred.resolve(counts);
+                }
+            }
+        });
+        return deferred.promise;
+    },
+
+    _getWorkspaces: function() {
+        var deferred = Ext.create('Deft.Deferred');
+        var all_workspaces = this.getSetting('countAllWorkspaces');
+        this._getSubscription().then({
+            success: function(sub) {
+                sub[0].getCollection('Workspaces').load({
+                    fetch: ['ObjectID','Name'],
+                    callback: function(workspaces,operation,success){
+                        deferred.resolve(workspaces);
                     }
-                    // ---------------------
-                }   
-            }   
-        }); 
+                });
+            },
+            failure: function(msg) {
+                deferred.reject(msg);
+            }
+        });
+        this.logger.log('Count All:', all_workspaces);
+        return deferred.promise;
+    },
+
+    _getSubscription: function() {
+        return this._loadWsapiRecords({
+            model:'Subscription',
+            fetch: ['Name','Workspaces']
+        });
     },
 
     _loadWsapiRecords: function(config){
@@ -131,35 +166,69 @@ Ext.define("TSApp", {
         return deferred.promise;
     },
 
-    _loadAStoreWithAPromise: function(model_name, model_fields){
-        var deferred = Ext.create('Deft.Deferred');
-        var me = this;
-        this.logger.log("Starting load:",model_name,model_fields);
-          
-        Ext.create('Rally.data.wsapi.Store', {
-            model: model_name,
-            fetch: model_fields
-        }).load({
-            callback : function(records, operation, successful) {
-                if (successful){
-                    deferred.resolve(this);
-                } else {
-                    me.logger.log("Failed: ", operation);
-                    deferred.reject('Problem loading: ' + operation.error.errors.join('. '));
-                }
-            }
+    _getColumns: function() {
+        var column_names = Ext.Array.merge(['Name'],this._getRecordTypesToCount());
+        return Ext.Array.map(column_names, function(name){
+            return { dataIndex: name, text: name };
         });
-        return deferred.promise;
     },
-    
-    _displayGrid: function(store,field_names){
+
+    _makeGrid: function(results){
+        var store = Ext.create('Rally.data.custom.Store',{
+            data: results,
+            pageSize: 500
+        });
+
         this.down('#display_box').add({
             xtype: 'rallygrid',
             store: store,
-            columnCfgs: field_names
+            columnCfgs: this._getColumns(),
+            showPagingToolbar: false,
+            showRowActionsColumn: false
+        });
+        this._addSelectors();
+        this._setLoading(false);
+    },
+
+    _addSelectors: function() {
+        this.down('#selector_box').add({
+            xtype:'container',
+            flex: 1
+        });
+
+        this.down('#selector_box').add({
+            xtype: 'rallybutton',
+            iconCls: 'icon-export',
+            itemId: 'btExport',
+            cls: 'rly-small primary',
+            disabled: false,
+            margin: 5,
+            listeners: {
+                scope: this,
+                click: this._exportData
+            }
         });
     },
-    
+
+    _exportData: function() {
+        var grid = this.down('rallygrid');
+        var csv = [];
+        var data = grid.getStore().getData().items;
+        console.log('data', data);
+
+        var headers = Ext.Array.merge(['Name'],this._getRecordTypesToCount());
+        csv.push(headers.join(','));
+        Ext.Array.each(data, function(s){
+            var row = Ext.Array.map(headers, function(field){
+                return s.get(field);
+            });
+            csv.push(row.join(','));
+        });
+        csv = csv.join("\r\n");
+
+        CArABU.technicalservices.Exporter.saveCSVToFile(csv, Ext.String.format('counts.csv'));
+    },
+
     getOptions: function() {
         return [
             {
@@ -169,14 +238,28 @@ Ext.define("TSApp", {
             }
         ];
     },
-    
+
     _launchInfo: function() {
         if ( this.about_dialog ) { this.about_dialog.destroy(); }
         this.about_dialog = Ext.create('Rally.technicalservices.InfoLink',{});
     },
-    
+
     isExternal: function(){
         return typeof(this.getAppId()) == 'undefined';
+    },
+
+    getSettingsFields: function() {
+        var check_box_margins = 15;
+        return [
+            {
+                name: 'countAllWorkspaces',
+                xtype:'rallycheckboxfield',
+                boxLabelAlign: 'after',
+                fieldLabel: '',
+                margin: check_box_margins,
+                boxLabel: 'Count in All Workspaces<br/><span style="color:#999999;"><i>Only includes open workspaces and open projects.</i></span>'
+            }
+        ];
     }
-    
+
 });

@@ -1,6 +1,6 @@
 {
-    "name": "rally-object-counter",
+    "name": "Rally Object Counter",
     "sdk": "2.1",
-    "className": "TSApp",
-    "story": "US"
+    "className": "TSRallyObjectCounter",
+    "story": "n/a"
 }
